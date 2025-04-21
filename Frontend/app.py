@@ -3,9 +3,10 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import requests
 import threading
 import time
+import os
 
 app = Flask(__name__)
-API_URL = "http://localhost:8000/chat"
+API_URL = "https://moodify2.onrender.com/chat"
 conversation_history = {}
 analyzer = SentimentIntensityAnalyzer()
 
@@ -115,7 +116,7 @@ def clear_chat():
 def ping_fastapi():
     while True:
         try:
-            res = requests.get("http://localhost:8000/keepalive")
+            res = requests.get("https://moodify2.onrender.com/keepalive")
             if res.status_code == 200:
                 print(f"[{time.strftime('%H:%M:%S')}] ✅ Pinged backend:", res.json()["message"])
             else:
@@ -128,4 +129,5 @@ def ping_fastapi():
 threading.Thread(target=ping_fastapi, daemon=True).start()
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
