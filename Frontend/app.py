@@ -111,6 +111,7 @@ def clear_chat():
     conversation_history[session_id] = [
         {"role": "system", "content": "You are Moodify, an emotionally intelligent assistant. Keep your tone warm, concise, and friendly, adapting based on emotions like joy, sadness, confusion, or excitement."}
     ]
+    conversation_history.pop(session_id, None)
     return jsonify({"status": "success"})
 
 def ping_fastapi():
