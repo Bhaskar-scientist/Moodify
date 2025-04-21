@@ -615,7 +615,25 @@
                 console.error('Error:', error);
             }
         }
-        
+
+        window.onload = function () {
+            const sessionId = "default"; // Or dynamically get it from localStorage if needed
+
+            fetch('/api/clear', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ session_id: sessionId }),
+            })
+            .then(response => response.json())
+            .then(data => {
+              console.log("Chat history cleared on refresh:", data);
+            })
+            .catch(error => {
+              console.error("Error clearing chat history:", error);
+            });
+        };
         // Event listeners
         sendButton.addEventListener('click', sendMessage);
         userInput.addEventListener('keypress', (e) => {
