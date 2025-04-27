@@ -69,7 +69,7 @@ def chat():
     # Always inject the system prompt at the start of the history
     conversation_history[session_id] = [
         {"role": "system", "content": MOODIFY_SYSTEM_PROMPT}
-    ] + conversation_history[session_id][-10:]  # keep last 10 messages (trim old)
+    ] + conversation_history[session_id][-30:]  # keep last 10 messages (trim old)
 
     conversation_history[session_id].append({"role": "user", "content": user_message})
 
