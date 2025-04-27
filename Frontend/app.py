@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import torch
 import requests
 import threading
 import time
@@ -8,56 +9,36 @@ import os
 app = Flask(__name__)
 API_URL = "https://moodify2.onrender.com/chat"
 conversation_history = {}
-analyzer = SentimentIntensityAnalyzer()
 
-# Mapping logic for emotion detection
-def get_emotion(text):
-    sentiment = analyzer.polarity_scores(text)
-    neg = sentiment['neg']
-    neu = sentiment['neu']
-    pos = sentiment['pos']
-    text_lower = text.lower()
+# Load emotion detection model
+tokenizer = AutoTokenizer.from_pretrained("j-hartmann/emotion-english-distilroberta-base")
+model = AutoModelForSequenceClassification.from_pretrained("j-hartmann/emotion-english-distilroberta-base")
+EMOTION_LABELS = ['admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion',
+                  'curiosity', 'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment',
+                  'excitement', 'fear', 'gratitude', 'grief', 'joy', 'love', 'nervousness', 'optimism',
+                  'pride', 'realization', 'relief', 'remorse', 'sadness', 'surprise', 'neutral']
 
-    greetings = {"hi", "hello", "hey", "greetings", "yo", "hola"}
-
-    if text_lower.strip() in greetings:
-        return "Greeting"
-    if pos > 0.7:
-        return "Joy / Excited"
-    elif 0.4 < pos <= 0.7:
-        return "Content / Grateful"
-    elif neu > 0.7:
-        return "Confused / Lost"
-    elif neu > 0.6:
-        return "Neutral / Calm"
-    elif neg > 0.6:
-        return "Sad / Lonely"
-    elif neg > 0.5 and pos < 0.2:
-        return "Angry / Frustrated"
-    elif neg > 0.4 and neu > 0.4:
-        return "Anxious / Worried"
-    elif "gross" in text_lower or "nasty" in text_lower or "disgusting" in text_lower:
-        return "Disgusted"
-    elif any(word in text_lower for word in ["wow", "really?", "no way", "omg"]):
-        return "Surprised"
-    else:
-        return "Neutral / Calm"
-    
-
+# Emoji mapping (can expand as needed)
 EMOJI_MAP = {
-    "Joy / Excited": "😄",
-    "Content / Grateful": "😊",
-    "Neutral / Calm": "😌",
-    "Sad / Lonely": "😔",
-    "Angry / Frustrated": "😠",
-    "Anxious / Worried": "😟",
-    "Confused / Lost": "😕",
-    "Disgusted": "🤢",
-    "Surprised": "😲"
+    "joy": "😄",
+    "gratitude": "😊",
+    "sadness": "😔",
+    "anger": "😠",
+    "fear": "😟",
+    "confusion": "😕",
+    "disgust": "🤢",
+    "surprise": "😲",
+    "neutral": "😌"
 }
 
-
-
+# Detect emotion using HuggingFace transformer
+def get_emotion(text):
+    inputs = tokenizer(text, return_tensors="pt", truncation=True)
+    with torch.no_grad():
+        logits = model(**inputs).logits
+    probs = torch.nn.functional.softmax(logits, dim=-1)[0]
+    top_idx = torch.argmax(probs).item()
+    return EMOTION_LABELS[top_idx], probs[top_idx].item()
 
 @app.route('/')
 def index():
@@ -70,17 +51,26 @@ def chat():
     session_id = data.get('session_id', 'default')
 
     # Detect emotion
-    emotion_label = get_emotion(user_message)
-    emoji = EMOJI_MAP.get(emotion_label, "")
-    message_with_emotion = f"Emotion detected: {emotion_label}\n{user_message}"
+    emotion_label, emotion_confidence = get_emotion(user_message)
+    emoji = EMOJI_MAP.get(emotion_label.lower(), "")
+    
+    # Create a mild influence system prompt (30% emotion bias)
+    system_prompt = (
+        "You are Moodify, a warm, emotionally aware assistant. "
+        "While maintaining your own conversational logic, consider the user's emotional state: "
+        f"{emotion_label}. Respond in a brief (max 60 words), empathetic but clear tone."
+    )
 
-    # Init conversation history
+    # Init or update conversation history
     if session_id not in conversation_history:
-        conversation_history[session_id] = [
-            {"role": "system", "content": "You are Moodify, an emotionally intelligent assistant. Keep responses brief (under 60 words), casual, and deeply empathetic based on detected user emotions."}
-        ]
+        conversation_history[session_id] = []
+    
+    # Reset system prompt each time for partial emotion influence
+    conversation_history[session_id] = [
+        {"role": "system", "content": system_prompt}
+    ] + conversation_history[session_id][-10:]  # keep last 10 messages
 
-    conversation_history[session_id].append({"role": "user", "content": message_with_emotion})
+    conversation_history[session_id].append({"role": "user", "content": user_message})
 
     try:
         response = requests.post(
@@ -95,10 +85,13 @@ def chat():
         response_data = response.json()
         assistant_message = response_data["choices"][0]["message"]["content"]
         conversation_history[session_id].append({"role": "assistant", "content": assistant_message})
-        print(emoji)
 
-        return jsonify({"response": assistant_message, "emotion": emotion_label,"emoji": emoji})
-        
+        return jsonify({
+            "response": assistant_message,
+            "emotion": emotion_label,
+            "emoji": emoji,
+            "confidence": f"{emotion_confidence:.2f}"
+        })
 
     except Exception as e:
         print(f"Error calling backend API: {e}")
@@ -108,12 +101,10 @@ def chat():
 def clear_chat():
     data = request.json
     session_id = data.get('session_id', 'default')
-    conversation_history[session_id] = [
-        {"role": "system", "content": "You are Moodify, an emotionally intelligent assistant. Keep your tone warm, concise, and friendly, adapting based on emotions like joy, sadness, confusion, or excitement."}
-    ]
     conversation_history.pop(session_id, None)
     return jsonify({"status": "success"})
 
+# Keepalive logic
 def ping_fastapi():
     while True:
         try:
@@ -124,9 +115,8 @@ def ping_fastapi():
                 print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Ping failed with status {res.status_code}")
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] ❌ Error pinging backend:", e)
-        time.sleep(10 * 60)  # ping every 13 minutes
+        time.sleep(10 * 60)
 
-# Start the pinging thread when Flask starts
 threading.Thread(target=ping_fastapi, daemon=True).start()
 
 if __name__ == '__main__':
