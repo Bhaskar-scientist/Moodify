@@ -1,6 +1,4 @@
 from flask import Flask, render_template, request, jsonify
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import torch
 import requests
 import threading
 import time
@@ -10,35 +8,49 @@ app = Flask(__name__)
 API_URL = "https://moodify2.onrender.com/chat"
 conversation_history = {}
 
-# Load emotion detection model
-tokenizer = AutoTokenizer.from_pretrained("j-hartmann/emotion-english-distilroberta-base")
-model = AutoModelForSequenceClassification.from_pretrained("j-hartmann/emotion-english-distilroberta-base")
-EMOTION_LABELS = ['admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring', 'confusion',
-                  'curiosity', 'desire', 'disappointment', 'disapproval', 'disgust', 'embarrassment',
-                  'excitement', 'fear', 'gratitude', 'grief', 'joy', 'love', 'nervousness', 'optimism',
-                  'pride', 'realization', 'relief', 'remorse', 'sadness', 'surprise', 'neutral']
+# New Moodify system prompt
+MOODIFY_SYSTEM_PROMPT = """
+You are Moodify, a warm, emotionally intelligent companion.
 
-# Emoji mapping (can expand as needed)
-EMOJI_MAP = {
-    "joy": "😄",
-    "gratitude": "😊",
-    "sadness": "😔",
-    "anger": "😠",
-    "fear": "😟",
-    "confusion": "😕",
-    "disgust": "🤢",
-    "surprise": "😲",
-    "neutral": "😌"
-}
+Your core purpose:
+- Comfort the user sincerely and naturally, like a close friend would.
+- Prioritize connection over advice. Listen actively and respond empathetically without labeling or diagnosing emotions.
+- Validate the user's feelings when appropriate. Offer gentle positivity, but avoid forced cheerfulness if the mood is serious.
+- If the user feels stuck, gently ask thoughtful, natural questions to help the conversation flow or explore new angles.
 
-# Detect emotion using HuggingFace transformer
-def get_emotion(text):
-    inputs = tokenizer(text, return_tensors="pt", truncation=True)
-    with torch.no_grad():
-        logits = model(**inputs).logits
-    probs = torch.nn.functional.softmax(logits, dim=-1)[0]
-    top_idx = torch.argmax(probs).item()
-    return EMOTION_LABELS[top_idx], probs[top_idx].item()
+Dynamic behavior:
+- Adapt your tone subtly based on the user's vibe and the emotional flow of the conversation.
+- You may shift into:
+  - Slight playfulness if the user feels lighthearted.
+  - Soft charm, offering natural compliments if it suits the moment.
+  - Calm and reflective tones if the user is serious or thoughtful.
+  - Gentle philosophical reflections if the conversation feels deep.
+- Switch tones naturally when it feels appropriate — never force it, and never make sudden, jarring changes.
+
+Interaction style:
+- Keep responses brief but meaningful: around 2 to 4 sentences per reply.
+- Avoid robotic or overly polished phrases — sound authentic, soft, and truly human.
+- Respectfully offer a different perspective if needed, but always prioritize the user’s comfort and emotional safety.
+- Be human-like: flowing, vibing, sometimes playful, sometimes serious, sometimes simply present.
+
+Natural conversation flow:
+- Use occasional warm, thoughtful questions to move the conversation forward if the user seems unsure, such as:
+  - "What’s been on your mind lately?"
+  - "How do you usually cope with that?"
+  - "Is there anything that made you smile recently?"
+  - "If you could change one thing about it, what would it be?"
+
+Soft, meaningful endings:
+- After about 5 to 7 user messages, start gently guiding the conversation toward a warm, positive close.
+- End in a soft, human way, like a caring friend would, using lines like:
+  - "I'm really glad we talked. Remember, you're doing better than you think. 💛"
+  - "It's been lovely chatting. Take it easy today, alright?"
+  - "I'm always here when you feel like talking again. 🌸"
+
+Important:
+- You are not a therapist, coach, or advisor.
+- You are a true companion — an emotionally aware friend who vibes, flows, and connects with the user.
+"""
 
 @app.route('/')
 def index():
@@ -50,25 +62,14 @@ def chat():
     user_message = data.get('message', '')
     session_id = data.get('session_id', 'default')
 
-    # Detect emotion
-    emotion_label, emotion_confidence = get_emotion(user_message)
-    emoji = EMOJI_MAP.get(emotion_label.lower(), "")
-    
-    # Create a mild influence system prompt (30% emotion bias)
-    system_prompt = (
-        "You are Moodify, a warm, emotionally aware assistant. "
-        "While maintaining your own conversational logic, consider the user's emotional state: "
-        f"{emotion_label}. Respond in a brief (max 60 words), empathetic but clear tone."
-    )
-
-    # Init or update conversation history
+    # Initialize conversation history for session if not exists
     if session_id not in conversation_history:
         conversation_history[session_id] = []
-    
-    # Reset system prompt each time for partial emotion influence
+
+    # Always inject the system prompt at the start of the history
     conversation_history[session_id] = [
-        {"role": "system", "content": system_prompt}
-    ] + conversation_history[session_id][-10:]  # keep last 10 messages
+        {"role": "system", "content": MOODIFY_SYSTEM_PROMPT}
+    ] + conversation_history[session_id][-10:]  # keep last 10 messages (trim old)
 
     conversation_history[session_id].append({"role": "user", "content": user_message})
 
@@ -87,10 +88,7 @@ def chat():
         conversation_history[session_id].append({"role": "assistant", "content": assistant_message})
 
         return jsonify({
-            "response": assistant_message,
-            "emotion": emotion_label,
-            "emoji": emoji,
-            "confidence": f"{emotion_confidence:.2f}"
+            "response": assistant_message
         })
 
     except Exception as e:
@@ -104,7 +102,7 @@ def clear_chat():
     conversation_history.pop(session_id, None)
     return jsonify({"status": "success"})
 
-# Keepalive logic
+# Keepalive logic for backend
 def ping_fastapi():
     while True:
         try:
@@ -115,7 +113,7 @@ def ping_fastapi():
                 print(f"[{time.strftime('%H:%M:%S')}] ⚠️ Ping failed with status {res.status_code}")
         except Exception as e:
             print(f"[{time.strftime('%H:%M:%S')}] ❌ Error pinging backend:", e)
-        time.sleep(10 * 60)
+        time.sleep(10 * 60)  # every 10 minutes
 
 threading.Thread(target=ping_fastapi, daemon=True).start()
 
