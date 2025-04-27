@@ -1,5 +1,3 @@
 flask
 requests
-transformers
-torch
 uvicorn
