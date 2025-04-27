@@ -8,3 +8,6 @@ pydantic
 scikit-learn
 numpy
 requests
+transformers
+torch
+
