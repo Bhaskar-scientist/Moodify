@@ -116,7 +116,7 @@
             font-weight: bold;
             margin-bottom: 30px;
             text-align: center;
-            color: #F5F4EB;
+            color: #050403;
         }
 
         .sidebar-menu {
@@ -625,9 +625,10 @@
         const sendButton = document.getElementById('sendButton');
         const micButton = document.getElementById('micButton');
         const typingIndicator = document.getElementById('typingIndicator');
-        
-        // Start chat button event
-        startChatBtn.addEventListener('click', () => {
+
+        // Start chat button event - single event listener
+        startChatBtn.addEventListener('click', async () => {
+            // Fade out welcome screen and show chat
             welcomeScreen.classList.add('welcome-transition');
             setTimeout(() => {
                 welcomeScreen.style.display = 'none';
@@ -645,9 +646,28 @@
                 // Focus the input
                 userInput.focus();
             }, 500);
+            
+            // Fire backend call to start the chat
+            try {
+                const response = await fetch('/start_chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ start: true })
+                });
+
+                if (!response.ok) {
+                    console.error('Failed to start backend:', response.statusText);
+                } else {
+                    console.log('Backend started');
+                }
+            } catch (err) {
+                console.error('Error connecting to backend:', err);
+            }
         });
-        
-        // Send message function
+
+        // Send message function - choose ONE implementation
         function sendMessage() {
             const messageText = userInput.value.trim();
             if (messageText === '') return;
@@ -659,10 +679,10 @@
             // Show typing indicator
             typingIndicator.style.display = 'flex';
             
-            // Call API and get response
-            fetchBotResponse(messageText);
+            // Call the correct message processing function
+            sendChatMessage(messageText);
         }
-        
+
         // Add message to chat
         function addMessage(text, sender, emotion = '', emoji = '') {
             const messageDiv = document.createElement('div');
@@ -692,51 +712,24 @@
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-    
-        document.getElementById('startChat').addEventListener('click', async function () {
-            // Fade out welcome screen and show chat
-            document.getElementById('welcomeScreen').classList.add('welcome-transition');
-            setTimeout(() => {
-                document.getElementById('welcomeScreen').style.display = 'none';
-                document.getElementById('chatInterface').style.display = 'block';
-            }, 500);
-
-            // Fire backend call to start the chat
-            try {
-                const response = await fetch('/start_chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ start: true })
-                });
-
-                if (!response.ok) {
-                    console.error('Failed to start backend:', response.statusText);
-                } else {
-                    console.log('Backend started');
-                }
-            } catch (err) {
-                console.error('Error connecting to backend:', err);
+        // Combined chat message sending function
+        const sendChatMessage = async (messageText) => {
+            // If no message was provided, get it from the input field
+            if (!messageText) {
+                messageText = userInput.value.trim();
+                if (!messageText) return;
+                
+                // Add user message to chat (only needed if called directly)
+                addMessage(messageText, 'user');
+                userInput.value = '';
             }
-        });
-
-        const sendChatMessage = async () => {
-            const inputText = document.getElementById('userInput').value.trim();
-            if (!inputText) return;
-
-            // Show user's message
-            addMessage(inputText, 'user');
-
-            // Clear the input field
-            document.getElementById('userInput').value = '';
 
             try {
                 // Step 1: wake backend with GET
                 await fetch("https://moodify2.onrender.com/keepalive");
 
                 // Step 2: wait a few seconds
-                await new Promise((r) => setTimeout(r, 5000)); // 5 seconds
+                await new Promise((r) => setTimeout(r, 3000)); // Reduced to 3 seconds for better UX
 
                 // Step 3: send actual chat request
                 const response = await fetch("https://moodify2.onrender.com/chat", {
@@ -744,72 +737,25 @@
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
                         messages: [
-                            { role: "user", content: inputText },
+                            { role: "user", content: messageText },
                         ]
                     }),
                 });
+
+                // Hide typing indicator
+                typingIndicator.style.display = 'none';
 
                 const data = await response.json();
                 // Display bot's response
                 addMessage(data.choices?.[0]?.message?.content || "No response", 'bot');
 
             } catch (error) {
+                // Hide typing indicator
+                typingIndicator.style.display = 'none';
+                
                 console.error("Error communicating with chatbot:", error);
                 addMessage("Error communicating with chatbot.", 'bot');
             }
-        };
-        
-        // Fetch bot response from API
-        async function fetchBotResponse(userMessage) {
-            try {
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ message: userMessage })
-                });
-                
-                const data = await response.json();
-                
-                // Hide typing indicator
-                typingIndicator.style.display = 'none';
-
-                const botMessage = data.response;
-                const emotion = data.emotion || '';
-                const emoji = data.emoji || '';
-                
-                // Add bot response with typing effect
-                if (data.response) {
-                    addMessage(botMessage, 'bot', emotion, emoji);
-                }
-            } catch (error) {
-                // Hide typing indicator
-                typingIndicator.style.display = 'none';
-                
-                // Show error message
-                addMessage("Sorry, I'm having trouble connecting right now. Please try again later.", 'bot');
-                console.error('Error:', error);
-            }
-        }
-
-        window.onload = function () {
-            const sessionId = "default"; // Or dynamically get it from localStorage if needed
-
-            fetch('/api/clear', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ session_id: sessionId }),
-            })
-            .then(response => response.json())
-            .then(data => {
-              console.log("Chat history cleared on refresh:", data);
-            })
-            .catch(error => {
-              console.error("Error clearing chat history:", error);
-            });
         };
 
         // Event listeners
@@ -820,6 +766,25 @@
                 sendMessage();
             }
         });
+
+        window.onload = function () {
+            const sessionId = "default"; // Or dynamically get it from localStorage if needed
+
+            fetch('/api/clear', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ session_id: sessionId }),
+            })
+            .then(response => response.json())
+            .then(data => {
+            console.log("Chat history cleared on refresh:", data);
+            })
+            .catch(error => {
+            console.error("Error clearing chat history:", error);
+            });
+        };
     </script>
 </body>
 </html>
