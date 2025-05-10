@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from typing import List
+from typing import List, Optional # Added Optional
 from fastapi.responses import JSONResponse
 import os
 
@@ -29,10 +29,31 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     messages: List[Message]
 
+# New model for the /start_chat request
+class StartChatRequest(BaseModel):
+    start: Optional[bool] = None # Optional, as the frontend sends { start: true }
+
 @app.get("/keepalive")
 async def keep_alive():
     print("👋 Ping received — staying awake!")
     return JSONResponse({"message": "Still awake 🔥"})
+
+# New endpoint for /start_chat
+@app.post("/start_chat")
+async def start_chat_session(request: StartChatRequest):
+    # The request body will be something like {"start": true}
+    # For now, we'll just log that the chat session is starting
+    # and return a success message.
+    # You can add more complex logic here if needed in the future,
+    # e.g., initializing session-specific data.
+    if request.start:
+        print("🚀 Chat session initiated by frontend.")
+        return JSONResponse({"status": "success", "message": "Chat session started."})
+    else:
+        # Handle cases where 'start' might not be true or is missing, though frontend sends it as true
+        print("⚠️ Received /start_chat request without 'start: true'.")
+        return JSONResponse({"status": "noop", "message": "Start signal not explicitly true."}, status_code=200)
+
 
 @app.post("/chat")
 async def chat_completion(request: ChatRequest):
